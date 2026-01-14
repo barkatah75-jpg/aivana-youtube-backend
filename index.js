@@ -1,10 +1,8 @@
 import express from "express";
 import multer from "multer";
 import fs from "fs";
-import path from "path";
 import { google } from "googleapis";
 import dotenv from "dotenv";
-import open from "open";
 
 dotenv.config();
 
@@ -18,7 +16,7 @@ const oauth2Client = new google.auth.OAuth2(
   process.env.REDIRECT_URI
 );
 
-// ---------- Load tokens if exist ----------
+// ---------- Load tokens ----------
 const TOKEN_PATH = "tokens.json";
 if (fs.existsSync(TOKEN_PATH)) {
   const tokens = JSON.parse(fs.readFileSync(TOKEN_PATH));
@@ -26,10 +24,10 @@ if (fs.existsSync(TOKEN_PATH)) {
   console.log("✅ Tokens loaded");
 }
 
-// ---------- Multer setup ----------
+// ---------- Multer ----------
 const upload = multer({ dest: "uploads/" });
 
-// ---------- AUTH ROUTE ----------
+// ---------- AUTH ----------
 app.get("/auth", (req, res) => {
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: "offline",
@@ -38,8 +36,7 @@ app.get("/auth", (req, res) => {
       "https://www.googleapis.com/auth/youtube.force-ssl",
     ],
   });
-  open(authUrl);
-  res.send("🔐 Authorizing with Google...");
+  res.redirect(authUrl);
 });
 
 // ---------- CALLBACK ----------
@@ -87,7 +84,7 @@ app.post("/upload", upload.single("video"), async (req, res) => {
   }
 });
 
-// ---------- START SERVER ----------
+// ---------- START ----------
 app.listen(PORT, () => {
-  console.log(`🚀 Backend running at http://localhost:${PORT}`);
+  console.log(`🚀 Backend running on port ${PORT}`);
 });
