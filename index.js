@@ -9,6 +9,9 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// ---------- MIDDLEWARE ----------
+app.use(express.json());
+
 // ---------- OAuth2 Setup ----------
 const oauth2Client = new google.auth.OAuth2(
   process.env.CLIENT_ID,
@@ -16,7 +19,7 @@ const oauth2Client = new google.auth.OAuth2(
   process.env.REDIRECT_URI
 );
 
-// ---------- Load tokens ----------
+// ---------- Load tokens if exist ----------
 const TOKEN_PATH = "tokens.json";
 if (fs.existsSync(TOKEN_PATH)) {
   const tokens = JSON.parse(fs.readFileSync(TOKEN_PATH));
@@ -24,10 +27,10 @@ if (fs.existsSync(TOKEN_PATH)) {
   console.log("✅ Tokens loaded");
 }
 
-// ---------- Multer ----------
+// ---------- Multer setup ----------
 const upload = multer({ dest: "uploads/" });
 
-// ---------- AUTH ----------
+// ---------- AUTH ROUTE ----------
 app.get("/auth", (req, res) => {
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: "offline",
@@ -39,17 +42,22 @@ app.get("/auth", (req, res) => {
   res.redirect(authUrl);
 });
 
-// ---------- CALLBACK ----------
+// ---------- CALLBACK ROUTE ----------
 app.get("/auth/callback", async (req, res) => {
-  const { code } = req.query;
-  const { tokens } = await oauth2Client.getToken(code);
-  oauth2Client.setCredentials(tokens);
-  fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2));
-  console.log("✅ TOKENS RECEIVED:", tokens);
-  res.send("✅ YouTube Connected Successfully. You can close this tab.");
+  try {
+    const { code } = req.query;
+    const { tokens } = await oauth2Client.getToken(code);
+    oauth2Client.setCredentials(tokens);
+    fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2));
+    console.log("✅ TOKENS RECEIVED");
+    res.send("✅ YouTube Connected Successfully. You can close this tab.");
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("OAuth failed");
+  }
 });
 
-// ---------- UPLOAD ----------
+// ---------- MANUAL UPLOAD (OPTIONAL) ----------
 app.post("/upload", upload.single("video"), async (req, res) => {
   try {
     const youtube = google.youtube({
@@ -61,8 +69,8 @@ app.post("/upload", upload.single("video"), async (req, res) => {
       part: "snippet,status",
       requestBody: {
         snippet: {
-          title: req.body.title,
-          description: req.body.description,
+          title: req.body.title || "AIVANA Upload",
+          description: req.body.description || "Uploaded via AIVANA backend",
         },
         status: {
           privacyStatus: "public",
@@ -84,7 +92,50 @@ app.post("/upload", upload.single("video"), async (req, res) => {
   }
 });
 
-// ---------- START ----------
+// ---------- AUTO GENERATE + UPLOAD (CORE ROUTE) ----------
+app.post("/generate-and-upload", async (req, res) => {
+  try {
+    const title = req.body?.title || "AIVANA Universe Fact";
+    const description =
+      req.body?.description || "Generated & uploaded by AIVANA Universe";
+
+    // NOTE: For now using small test video already on server
+    const videoPath = "test.mp4";
+
+    if (!fs.existsSync(videoPath)) {
+      return res.status(500).json({
+        error: "test.mp4 not found on server",
+      });
+    }
+
+    const youtube = google.youtube({
+      version: "v3",
+      auth: oauth2Client,
+    });
+
+    const response = await youtube.videos.insert({
+      part: "snippet,status",
+      requestBody: {
+        snippet: { title, description },
+        status: { privacyStatus: "public" },
+      },
+      media: {
+        body: fs.createReadStream(videoPath),
+      },
+    });
+
+    res.json({
+      success: true,
+      videoId: response.data.id,
+      url: `https://www.youtube.com/watch?v=${response.data.id}`,
+    });
+  } catch (err) {
+    console.error("❌ GENERATE+UPLOAD ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------- START SERVER ----------
 app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
 });
