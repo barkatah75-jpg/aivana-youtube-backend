@@ -1,107 +1,118 @@
+// ===============================
+// AIVANA YouTube Backend (FINAL)
+// Phase 1 + Phase 2
+// ===============================
+
 import express from "express";
 import fs from "fs";
+import path from "path";
 import multer from "multer";
-import cron from "node-cron";
-import { google } from "googleapis";
 import dotenv from "dotenv";
+import { google } from "googleapis";
 
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
-
-// ---------------- MIDDLEWARE ----------------
 app.use(express.json());
 
-// ---------------- OAUTH SETUP ----------------
+// ===============================
+// ENV + PORT
+// ===============================
+const PORT = process.env.PORT || 10000;
+const CLIENT_ID = process.env.CLIENT_ID;
+const CLIENT_SECRET = process.env.CLIENT_SECRET;
+const REDIRECT_URI = process.env.REDIRECT_URI;
+
+// ===============================
+// UPLOADS DIR
+// ===============================
+const UPLOAD_DIR = path.join(process.cwd(), "uploads");
+if (!fs.existsSync(UPLOAD_DIR)) {
+  fs.mkdirSync(UPLOAD_DIR);
+}
+
+// ===============================
+// MULTER CONFIG
+// ===============================
+const upload = multer({ dest: UPLOAD_DIR });
+
+// ===============================
+// GOOGLE OAUTH CLIENT
+// ===============================
 const oauth2Client = new google.auth.OAuth2(
-  process.env.CLIENT_ID,
-  process.env.CLIENT_SECRET,
-  process.env.REDIRECT_URI
+  CLIENT_ID,
+  CLIENT_SECRET,
+  REDIRECT_URI
 );
 
-// ---------------- LOAD TOKENS ----------------
-const TOKEN_PATH = "tokens.json";
+// ===============================
+// LOAD TOKENS IF EXIST
+// ===============================
+const TOKEN_PATH = path.join(process.cwd(), "tokens.json");
 if (fs.existsSync(TOKEN_PATH)) {
-  const tokens = JSON.parse(fs.readFileSync(TOKEN_PATH));
+  const tokens = JSON.parse(fs.readFileSync(TOKEN_PATH, "utf8"));
   oauth2Client.setCredentials(tokens);
-  console.log("✅ Tokens loaded");
 }
 
-// ---------------- HELPERS ----------------
-function generateUniverseScript() {
-  const facts = [
-    "Black holes can slow down time.",
-    "There are more stars in the universe than grains of sand on Earth.",
-    "Light from the Sun takes 8 minutes to reach Earth.",
-    "A day on Venus is longer than its year.",
-    "Neutron stars are so dense that one spoon weighs billions of tons.",
-    "The universe is expanding faster every second.",
-    "Saturn could float in water if a bathtub was big enough."
-  ];
-  const pick = facts[Math.floor(Math.random() * facts.length)];
-  return `🌌 Universe Fact:\n${pick}`;
-}
-
-// NOTE: For now we reuse a small safe video already on server
-function generateVideoPlaceholder(outputPath) {
-  fs.copyFileSync("test.mp4", outputPath);
-}
-
-// ---------------- AUTH ROUTES ----------------
+// ===============================
+// AUTH ROUTE
+// ===============================
 app.get("/auth", (req, res) => {
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: "offline",
     scope: [
       "https://www.googleapis.com/auth/youtube.upload",
-      "https://www.googleapis.com/auth/youtube.force-ssl"
-    ]
+      "https://www.googleapis.com/auth/youtube.force-ssl",
+    ],
+    prompt: "consent",
   });
   res.redirect(authUrl);
 });
 
+// ===============================
+// AUTH CALLBACK
+// ===============================
 app.get("/auth/callback", async (req, res) => {
   try {
     const { code } = req.query;
     const { tokens } = await oauth2Client.getToken(code);
     oauth2Client.setCredentials(tokens);
     fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2));
-    console.log("✅ TOKENS RECEIVED & SAVED");
     res.send("✅ YouTube Connected Successfully. You can close this tab.");
   } catch (err) {
-    console.error(err);
-    res.status(500).send("OAuth failed");
+    res.status(500).send("Auth error: " + err.message);
   }
 });
 
-// ---------------- CORE API (AI + UPLOAD) ----------------
-app.post("/generate-and-upload", async (req, res) => {
+// ===============================
+// YOUTUBE CLIENT
+// ===============================
+const youtube = google.youtube({
+  version: "v3",
+  auth: oauth2Client,
+});
+
+// ===============================
+// UPLOAD ROUTE (manual video)
+// ===============================
+app.post("/upload", upload.single("video"), async (req, res) => {
   try {
-    const videoPath = path.join("uploads", "aivana-auto.mp4");
-
-    // 🔥 अगर video मौजूद नहीं है → dummy create करो
-    if (!fs.existsSync(videoPath)) {
-      fs.writeFileSync(videoPath, Buffer.from("000000")); // placeholder
-    }
-
-    const youtube = google.youtube({
-      version: "v3",
-      auth: oauth2Client,
-    });
+    const { title, description } = req.body;
 
     const response = await youtube.videos.insert({
-      part: ["snippet", "status"],
+      part: "snippet,status",
       requestBody: {
         snippet: {
-          title: "AIVANA Auto Upload Test",
-          description: "Uploaded automatically by AIVANA Universe",
+          title: title || "AIVANA Upload",
+          description: description || "Uploaded via AIVANA Backend",
+          categoryId: "28",
         },
         status: {
           privacyStatus: "public",
         },
       },
       media: {
-        body: fs.createReadStream(videoPath),
+        body: fs.createReadStream(req.file.path),
       },
     });
 
@@ -111,58 +122,56 @@ app.post("/generate-and-upload", async (req, res) => {
       url: `https://www.youtube.com/watch?v=${response.data.id}`,
     });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
 
-    res.json({
-      success: true,
-      videoId: response.data.id,
-      url: `https://www.youtube.com/watch?v=${response.data.id}`
-    });
-  } catch (err) {
-    console.error("❌ GENERATE+UPLOAD ERROR:", err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ---------------- DAILY AUTO SCHEDULER ----------------
-// Runs at: 6am, 10am, 2pm, 6pm, 10pm (server timezone)
-cron.schedule("0 6,10,14,18,22 * * *", async () => {
-  console.log("⏰ AIVANA DAILY AUTO JOB STARTED");
-
+// ===============================
+// GENERATE + UPLOAD (AUTO PIPELINE)
+// ===============================
+app.post("/generate-and-upload", async (req, res) => {
   try {
-    const script = generateUniverseScript();
-    const videoPath = "uploads/aivana-auto.mp4";
-    generateVideoPlaceholder(videoPath);
-
-    const youtube = google.youtube({
-      version: "v3",
-      auth: oauth2Client
-    });
+    // Dummy auto video (small placeholder)
+    const autoVideoPath = path.join(UPLOAD_DIR, "aivana-auto.txt");
+    fs.writeFileSync(autoVideoPath, "AIVANA AUTO CONTENT");
 
     const response = await youtube.videos.insert({
       part: "snippet,status",
       requestBody: {
         snippet: {
-          title: "🌌 Universe Fact | AIVANA",
-          description: script
+          title: "AIVANA Auto Upload",
+          description: "Auto-generated by AIVANA Universe",
+          categoryId: "28",
         },
-        status: { privacyStatus: "public" }
+        status: {
+          privacyStatus: "public",
+        },
       },
       media: {
-        body: fs.createReadStream(videoPath)
-      }
+        body: fs.createReadStream(autoVideoPath),
+      },
     });
 
-    console.log("✅ AUTO UPLOADED:", response.data.id);
+    res.json({
+      success: true,
+      videoId: response.data.id,
+      url: `https://www.youtube.com/watch?v=${response.data.id}`,
+    });
   } catch (err) {
-    console.error("❌ AUTO JOB FAILED:", err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
-// ---------------- START SERVER ----------------
+// ===============================
+// HEALTH CHECK
+// ===============================
+app.get("/", (req, res) => {
+  res.send("🚀 AIVANA YouTube Backend is running");
+});
+
+// ===============================
+// START SERVER
+// ===============================
 app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
 });
