@@ -77,29 +77,44 @@ app.get("/auth/callback", async (req, res) => {
 // ---------------- CORE API (AI + UPLOAD) ----------------
 app.post("/generate-and-upload", async (req, res) => {
   try {
-    const script = generateUniverseScript();
-    const videoPath = "uploads/aivana-auto.mp4";
+    const videoPath = path.join("uploads", "aivana-auto.mp4");
 
-    generateVideoPlaceholder(videoPath);
+    // 🔥 अगर video मौजूद नहीं है → dummy create करो
+    if (!fs.existsSync(videoPath)) {
+      fs.writeFileSync(videoPath, Buffer.from("000000")); // placeholder
+    }
 
     const youtube = google.youtube({
       version: "v3",
-      auth: oauth2Client
+      auth: oauth2Client,
     });
 
     const response = await youtube.videos.insert({
-      part: "snippet,status",
+      part: ["snippet", "status"],
       requestBody: {
         snippet: {
-          title: "🌌 Universe Fact | AIVANA",
-          description: script
+          title: "AIVANA Auto Upload Test",
+          description: "Uploaded automatically by AIVANA Universe",
         },
-        status: { privacyStatus: "public" }
+        status: {
+          privacyStatus: "public",
+        },
       },
       media: {
-        body: fs.createReadStream(videoPath)
-      }
+        body: fs.createReadStream(videoPath),
+      },
     });
+
+    res.json({
+      success: true,
+      videoId: response.data.id,
+      url: `https://www.youtube.com/watch?v=${response.data.id}`,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
     res.json({
       success: true,
