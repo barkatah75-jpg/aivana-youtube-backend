@@ -1,6 +1,7 @@
 import express from "express";
-import multer from "multer";
 import fs from "fs";
+import multer from "multer";
+import cron from "node-cron";
 import { google } from "googleapis";
 import dotenv from "dotenv";
 
@@ -9,17 +10,17 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// ---------- MIDDLEWARE ----------
+// ---------------- MIDDLEWARE ----------------
 app.use(express.json());
 
-// ---------- OAuth2 Setup ----------
+// ---------------- OAUTH SETUP ----------------
 const oauth2Client = new google.auth.OAuth2(
   process.env.CLIENT_ID,
   process.env.CLIENT_SECRET,
   process.env.REDIRECT_URI
 );
 
-// ---------- Load tokens if exist ----------
+// ---------------- LOAD TOKENS ----------------
 const TOKEN_PATH = "tokens.json";
 if (fs.existsSync(TOKEN_PATH)) {
   const tokens = JSON.parse(fs.readFileSync(TOKEN_PATH));
@@ -27,29 +28,45 @@ if (fs.existsSync(TOKEN_PATH)) {
   console.log("✅ Tokens loaded");
 }
 
-// ---------- Multer setup ----------
-const upload = multer({ dest: "uploads/" });
+// ---------------- HELPERS ----------------
+function generateUniverseScript() {
+  const facts = [
+    "Black holes can slow down time.",
+    "There are more stars in the universe than grains of sand on Earth.",
+    "Light from the Sun takes 8 minutes to reach Earth.",
+    "A day on Venus is longer than its year.",
+    "Neutron stars are so dense that one spoon weighs billions of tons.",
+    "The universe is expanding faster every second.",
+    "Saturn could float in water if a bathtub was big enough."
+  ];
+  const pick = facts[Math.floor(Math.random() * facts.length)];
+  return `🌌 Universe Fact:\n${pick}`;
+}
 
-// ---------- AUTH ROUTE ----------
+// NOTE: For now we reuse a small safe video already on server
+function generateVideoPlaceholder(outputPath) {
+  fs.copyFileSync("test.mp4", outputPath);
+}
+
+// ---------------- AUTH ROUTES ----------------
 app.get("/auth", (req, res) => {
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: "offline",
     scope: [
       "https://www.googleapis.com/auth/youtube.upload",
-      "https://www.googleapis.com/auth/youtube.force-ssl",
-    ],
+      "https://www.googleapis.com/auth/youtube.force-ssl"
+    ]
   });
   res.redirect(authUrl);
 });
 
-// ---------- CALLBACK ROUTE ----------
 app.get("/auth/callback", async (req, res) => {
   try {
     const { code } = req.query;
     const { tokens } = await oauth2Client.getToken(code);
     oauth2Client.setCredentials(tokens);
     fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2));
-    console.log("✅ TOKENS RECEIVED");
+    console.log("✅ TOKENS RECEIVED & SAVED");
     res.send("✅ YouTube Connected Successfully. You can close this tab.");
   } catch (err) {
     console.error(err);
@@ -57,85 +74,80 @@ app.get("/auth/callback", async (req, res) => {
   }
 });
 
-// ---------- MANUAL UPLOAD (OPTIONAL) ----------
-app.post("/upload", upload.single("video"), async (req, res) => {
+// ---------------- CORE API (AI + UPLOAD) ----------------
+app.post("/generate-and-upload", async (req, res) => {
   try {
+    const script = generateUniverseScript();
+    const videoPath = "uploads/aivana-auto.mp4";
+
+    generateVideoPlaceholder(videoPath);
+
     const youtube = google.youtube({
       version: "v3",
-      auth: oauth2Client,
+      auth: oauth2Client
     });
 
     const response = await youtube.videos.insert({
       part: "snippet,status",
       requestBody: {
         snippet: {
-          title: req.body.title || "AIVANA Upload",
-          description: req.body.description || "Uploaded via AIVANA backend",
+          title: "🌌 Universe Fact | AIVANA",
+          description: script
         },
-        status: {
-          privacyStatus: "public",
-        },
+        status: { privacyStatus: "public" }
       },
       media: {
-        body: fs.createReadStream(req.file.path),
-      },
+        body: fs.createReadStream(videoPath)
+      }
     });
 
     res.json({
       success: true,
       videoId: response.data.id,
-      url: `https://www.youtube.com/watch?v=${response.data.id}`,
+      url: `https://www.youtube.com/watch?v=${response.data.id}`
     });
   } catch (err) {
-    console.error(err);
+    console.error("❌ GENERATE+UPLOAD ERROR:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ---------- AUTO GENERATE + UPLOAD (CORE ROUTE) ----------
-app.post("/generate-and-upload", async (req, res) => {
+// ---------------- DAILY AUTO SCHEDULER ----------------
+// Runs at: 6am, 10am, 2pm, 6pm, 10pm (server timezone)
+cron.schedule("0 6,10,14,18,22 * * *", async () => {
+  console.log("⏰ AIVANA DAILY AUTO JOB STARTED");
+
   try {
-    const title = req.body?.title || "AIVANA Universe Fact";
-    const description =
-      req.body?.description || "Generated & uploaded by AIVANA Universe";
-
-    // NOTE: For now using small test video already on server
-    const videoPath = "test.mp4";
-
-    if (!fs.existsSync(videoPath)) {
-      return res.status(500).json({
-        error: "test.mp4 not found on server",
-      });
-    }
+    const script = generateUniverseScript();
+    const videoPath = "uploads/aivana-auto.mp4";
+    generateVideoPlaceholder(videoPath);
 
     const youtube = google.youtube({
       version: "v3",
-      auth: oauth2Client,
+      auth: oauth2Client
     });
 
     const response = await youtube.videos.insert({
       part: "snippet,status",
       requestBody: {
-        snippet: { title, description },
-        status: { privacyStatus: "public" },
+        snippet: {
+          title: "🌌 Universe Fact | AIVANA",
+          description: script
+        },
+        status: { privacyStatus: "public" }
       },
       media: {
-        body: fs.createReadStream(videoPath),
-      },
+        body: fs.createReadStream(videoPath)
+      }
     });
 
-    res.json({
-      success: true,
-      videoId: response.data.id,
-      url: `https://www.youtube.com/watch?v=${response.data.id}`,
-    });
+    console.log("✅ AUTO UPLOADED:", response.data.id);
   } catch (err) {
-    console.error("❌ GENERATE+UPLOAD ERROR:", err);
-    res.status(500).json({ error: err.message });
+    console.error("❌ AUTO JOB FAILED:", err.message);
   }
 });
 
-// ---------- START SERVER ----------
+// ---------------- START SERVER ----------------
 app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
 });
