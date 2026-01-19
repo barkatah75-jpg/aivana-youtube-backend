@@ -19,9 +19,9 @@ app.use(express.json());
 // ENV + PORT
 // ===============================
 const PORT = process.env.PORT || 10000;
-const CLIENT_ID = process.env.CLIENT_ID;
-const CLIENT_SECRET = process.env.CLIENT_SECRET;
-const REDIRECT_URI = process.env.REDIRECT_URI;
+const CLIENT_ID = process.env.YOUTUBE_CLIENT_ID;
+const CLIENT_SECRET = process.env.YOUTUBE_CLIENT_SECRET;
+const REDIRECT_URI = process.env.YOUTUBE_REDIRECT_URI;
 
 // ===============================
 // UPLOADS DIR
