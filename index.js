@@ -76,13 +76,12 @@ app.get("/auth/callback", async (req, res) => {
   try {
     const { code } = req.query;
     const { tokens } = await oauth2Client.getToken(code);
-    oauth2Client.setCredentials(tokens);
-    fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2));
-    res.send("✅ YouTube Connected Successfully. You can close this tab.");
-  } catch (err) {
-    res.status(500).send("Auth error: " + err.message);
-  }
-});
+
+// 🔴 ADD THIS LINE (TEMPORARY)
+console.log("REFRESH_TOKEN =>", tokens.refresh_token);
+
+oauth2Client.setCredentials(tokens);
+fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2));
 
 // ===============================
 // YOUTUBE CLIENT
