@@ -46,13 +46,9 @@ const oauth2Client = new google.auth.OAuth2(
 );
 
 // ===============================
-// LOAD TOKENS IF EXIST
+// TOKEN FILE (TEMP ONLY)
 // ===============================
 const TOKEN_PATH = path.join(process.cwd(), "tokens.json");
-if (fs.existsSync(TOKEN_PATH)) {
-  const tokens = JSON.parse(fs.readFileSync(TOKEN_PATH, "utf8"));
-  oauth2Client.setCredentials(tokens);
-}
 
 // ===============================
 // AUTH ROUTE
@@ -60,11 +56,11 @@ if (fs.existsSync(TOKEN_PATH)) {
 app.get("/auth", (req, res) => {
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: "offline",
+    prompt: "consent",
     scope: [
       "https://www.googleapis.com/auth/youtube.upload",
       "https://www.googleapis.com/auth/youtube.force-ssl",
     ],
-    prompt: "consent",
   });
   res.redirect(authUrl);
 });
@@ -77,11 +73,20 @@ app.get("/auth/callback", async (req, res) => {
     const { code } = req.query;
     const { tokens } = await oauth2Client.getToken(code);
 
-// 🔴 ADD THIS LINE (TEMPORARY)
-console.log("REFRESH_TOKEN =>", tokens.refresh_token);
+    // 🔥 IMPORTANT: REFRESH TOKEN LOG
+    console.log("REFRESH_TOKEN =>", tokens.refresh_token);
 
-oauth2Client.setCredentials(tokens);
-fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2));
+    oauth2Client.setCredentials(tokens);
+
+    // TEMP: write tokens to file
+    fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2));
+
+    res.send("✅ YouTube Connected Successfully. You can close this tab.");
+  } catch (err) {
+    console.error("OAuth Error:", err);
+    res.status(500).send("Auth error: " + err.message);
+  }
+});
 
 // ===============================
 // YOUTUBE CLIENT
@@ -92,7 +97,7 @@ const youtube = google.youtube({
 });
 
 // ===============================
-// UPLOAD ROUTE (manual video)
+// UPLOAD ROUTE (MANUAL)
 // ===============================
 app.post("/upload", upload.single("video"), async (req, res) => {
   try {
@@ -121,6 +126,7 @@ app.post("/upload", upload.single("video"), async (req, res) => {
       url: `https://www.youtube.com/watch?v=${response.data.id}`,
     });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -130,7 +136,6 @@ app.post("/upload", upload.single("video"), async (req, res) => {
 // ===============================
 app.post("/generate-and-upload", async (req, res) => {
   try {
-    // Dummy auto video (small placeholder)
     const autoVideoPath = path.join(UPLOAD_DIR, "aivana-auto.txt");
     fs.writeFileSync(autoVideoPath, "AIVANA AUTO CONTENT");
 
@@ -157,6 +162,7 @@ app.post("/generate-and-upload", async (req, res) => {
       url: `https://www.youtube.com/watch?v=${response.data.id}`,
     });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
